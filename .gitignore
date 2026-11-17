@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+page/preview/
+page/live-page.html
+page/original-custom-code.html
+page/replay-script.js
+page/sample-data/
+seed/

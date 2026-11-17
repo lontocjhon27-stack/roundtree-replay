@@ -1,0 +1,61 @@
+name: Update webinar replay
+
+on:
+  # Wednesday webinar is 5:00 PM PT. Zoom needs time to process the recording, so check a few times.
+  schedule:
+    - cron: '30 4 * * 4'   # Thu 04:30 UTC = Wed ~8:30-9:30 PM PT
+    - cron: '30 7 * * 4'   # Thu 07:30 UTC = Wed ~11:30 PM PT
+    - cron: '0 16 * * 4'   # Thu 16:00 UTC = Thu ~8-9 AM PT
+  workflow_dispatch:
+    inputs:
+      meeting_id:
+        description: 'Zoom meeting ID or UUID to publish (blank = newest LIVE Masterclass)'
+        required: false
+      force:
+        description: 'Re-publish even if the page already shows this recording'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run (find + compute only, no uploads)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-replay
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Publish newest recording
+        env:
+          ZOOM_ACCOUNT_ID: ${{ secrets.ZOOM_ACCOUNT_ID }}
+          ZOOM_CLIENT_ID: ${{ secrets.ZOOM_CLIENT_ID }}
+          ZOOM_CLIENT_SECRET: ${{ secrets.ZOOM_CLIENT_SECRET }}
+          ZOOM_USER: ${{ vars.ZOOM_USER || 'will@wemanagementservices.com' }}
+          GHL_TOKEN: ${{ secrets.GHL_TOKEN }}
+          GHL_LOCATION_ID: ${{ vars.GHL_LOCATION_ID || 'pcY7ioQLTs15S0hJiOdG' }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          MEETING_ID: ${{ inputs.meeting_id }}
+          FORCE: ${{ inputs.force && '1' || '0' }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: python scripts/update_replay.py
+      - name: Save replay.json
+        run: |
+          if git diff --quiet -- replay.json replay-history.json 2>/dev/null && [ -z "$(git status --porcelain replay.json replay-history.json)" ]; then
+            echo "No change."; exit 0; fi
+          git config user.name "replay-bot"
+          git config user.email "replay-bot@users.noreply.github.com"
+          git add replay.json replay-history.json
+          git commit -m "Replay: $(python -c "import json;print(json.load(open('replay.json'))['date_label'])")"
+          git push
