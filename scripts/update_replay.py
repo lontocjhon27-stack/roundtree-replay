@@ -130,6 +130,70 @@ def ready_second(chat_text):
     return None
 
 
+def caption_cues(vtt_text):
+    out = []
+    for m in re.finditer(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->[^\n]*\n([^\n]+(?:\n[^\n]+)*)', vtt_text):
+        out.append((int(to_sec(m.group(1))), m.group(2).replace('\n', ' ')))
+    return out
+
+
+def featured_moments(vtt_text, offer_at=None):
+    """[[sec, key], ...]: when Will shows a QR code, which link the room should feature (scan / call / join)."""
+    cues = caption_cues(vtt_text)
+    found = []
+    for i, (t, x) in enumerate(cues):
+        if not re.search(r'\bQR\b|scan (this|that|it|the)', x, re.I):
+            continue
+        if found and t - found[-1][0] < 180:
+            continue
+        ctx = ' '.join(c[1] for c in cues[i:i + 3])
+        if re.search(r'\bbook\b|game plan|call with|strategy call|sales team', ctx, re.I):
+            key = 'call'
+        elif re.search(r'fundab\w*\s+(score|scan)|scan your business|fundability', ctx, re.I) and not re.search(r'tier|29\.99|2,?999', ctx, re.I):
+            key = 'scan'
+        else:
+            key = 'join'
+        found.append([t, key])
+    if offer_at and not any(k == 'join' and abs(t - offer_at) < 120 for t, k in found):
+        found.append([offer_at, 'join'])
+    found.sort()
+    return found
+
+
+def short_name(name):
+    parts = name.strip().split()
+    return parts[0] if len(parts) < 2 else f'{parts[0]} {parts[-1][0]}.'
+
+
+def room_chat(chat_text, featured):
+    """Room-style chat: [sec, 'First L.', 'A', text] from the real Zoom chat (attendees only, no bots, no links),
+    plus a team 'tap here' card at each QR moment."""
+    msgs, cur = [], None
+    for line in chat_text.splitlines():
+        m = re.match(r'^(\d{2}:\d{2}:\d{2})\s+([^:\n]+?):\s*(.*)$', line)
+        if m:
+            cur = [int(to_sec(m.group(1))), m.group(2).strip(), m.group(3)]
+            msgs.append(cur)
+        elif cur:
+            cur[2] += '\n' + line
+    out = []
+    for t, author, text in msgs:
+        text = re.sub(r'^Replying to "[^"]*"\s*', '', text.strip())
+        if (not text or TEAM_RE.search(author) or re.search(r'fireflies|notetaker|otter|read\.ai', author, re.I)
+                or text.startswith('Reacted to ') or re.search(r'https?://', text)):
+            continue
+        out.append([t, short_name(author), 'A', text[:300]])
+    labels = {'scan': 'Scan the code on screen, or tap here 👇', 'call': 'Book your call with the team 👇',
+              'join': 'Webinar pricing is live 👇'}
+    repeat = {'scan': 'Free scan link again 👇', 'call': 'Not sure which tier? Book a call 👇', 'join': 'Sign up here 👇'}
+    seen = set()
+    for t, key in featured:
+        out.append([t + 20, repeat[key] if key in seen else labels[key], 'Link', key])
+        seen.add(key)
+    out.sort(key=lambda r: r[0])
+    return out
+
+
 def offer_second(vtt_text):
     """Fallback when nobody posted READY in the chat: the moment Will reveals the webinar price."""
     for m in re.finditer(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->[^\n]*\n([^\n]+)', vtt_text):
@@ -190,8 +254,13 @@ def main():
         chat_text = open(chat_path, encoding='utf-8', errors='replace').read()
 
     start_at = first_caption_second(vtt_text)
-    promo_at = ready_second(chat_text) or offer_second(vtt_text)
-    log(f'  start_at {start_at}s  promo_at {promo_at}s  captions {bool(cc)}  chat {bool(chat)}')
+    offer_at = offer_second(vtt_text)
+    promo_at = ready_second(chat_text) or offer_at
+    featured = featured_moments(vtt_text, offer_at)
+    rchat = room_chat(chat_text, featured)
+    room_chat_path = os.path.join(tmp, f'replay-{stamp}-room-chat.txt')
+    json.dump(rchat, open(room_chat_path, 'w', encoding='utf-8'), ensure_ascii=False)
+    log(f'  start_at {start_at}s  promo_at {promo_at}s  offer_at {offer_at}s  featured {featured}  room chat {len(rchat)} msgs')
 
     cfg = {
         'meeting_uuid': meeting['uuid'],
@@ -201,6 +270,8 @@ def main():
         'date_label': start_pt.strftime('%A, %B ') + str(start_pt.day) + start_pt.strftime(', %Y'),
         'start_at': start_at,
         'promo_at': promo_at,
+        'offer_at': offer_at or promo_at,
+        'featured': featured,
         'duration_min': meeting.get('duration'),
         'updated_at': dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'),
     }
@@ -218,6 +289,8 @@ def main():
         cfg['vtt_url'] = ghl_upload(vtt_path, f'Masterclass Replay {stamp} captions.txt', 'text/plain')
     if chat_path:
         cfg['chat_url'] = ghl_upload(chat_path, f'Masterclass Replay {stamp} chat.txt', 'text/plain')
+    # room-style chat (first name + last initial) lives in GHL, not in the public repo
+    cfg['room_chat_url'] = ghl_upload(room_chat_path, f'Masterclass Replay {stamp} room-chat.txt', 'text/plain')
 
     json.dump(cfg, open(CONFIG_PATH, 'w', encoding='utf-8'), indent=2)
     hist = json.load(open(HISTORY_PATH, encoding='utf-8')) if os.path.exists(HISTORY_PATH) else []
