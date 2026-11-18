@@ -130,6 +130,14 @@ def ready_second(chat_text):
     return None
 
 
+def offer_second(vtt_text):
+    """Fallback when nobody posted READY in the chat: the moment Will reveals the webinar price."""
+    for m in re.finditer(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->[^\n]*\n([^\n]+)', vtt_text):
+        if re.search(r'\$?29\.99|2,?999|text (me )?ready', m.group(2), re.I):
+            return int(to_sec(m.group(1)))
+    return None
+
+
 # ---------------------------------------------------------------- GHL Media
 def ghl_upload(path, name, mime):
     with open(path, 'rb') as fh:
@@ -182,7 +190,7 @@ def main():
         chat_text = open(chat_path, encoding='utf-8', errors='replace').read()
 
     start_at = first_caption_second(vtt_text)
-    promo_at = ready_second(chat_text)
+    promo_at = ready_second(chat_text) or offer_second(vtt_text)
     log(f'  start_at {start_at}s  promo_at {promo_at}s  captions {bool(cc)}  chat {bool(chat)}')
 
     cfg = {
