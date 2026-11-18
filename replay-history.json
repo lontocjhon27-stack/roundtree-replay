@@ -7,6 +7,52 @@
     "date_label": "Wednesday, November 4, 2026",
     "start_at": 344,
     "promo_at": 5022,
+    "offer_at": 5022,
+    "featured": [
+      [
+        2049,
+        "scan"
+      ],
+      [
+        3919,
+        "call"
+      ],
+      [
+        5058,
+        "join"
+      ],
+      [
+        5243,
+        "join"
+      ],
+      [
+        5434,
+        "join"
+      ],
+      [
+        5783,
+        "call"
+      ],
+      [
+        6328,
+        "join"
+      ]
+    ],
+    "duration_min": 112,
+    "updated_at": "2026-11-18T01:17:49+00:00",
+    "video_url": "https://files.leadconnectorhq.com/file/6afcfcd4893246071ffc43ae/masterclass-replay-2026-11-04-1.mp4",
+    "vtt_url": "https://files.leadconnectorhq.com/file/6afcfcd57c3b573a62ba82b1/masterclass-replay-2026-11-04-captions-1.txt",
+    "chat_url": "https://files.leadconnectorhq.com/file/6afcfcd577a01e4622649fc3/masterclass-replay-2026-11-04-chat-1.txt",
+    "room_chat_url": "https://files.leadconnectorhq.com/file/6afcfcd63309cfeb5384cffe/masterclass-replay-2026-11-04-room-chat.txt"
+  },
+  {
+    "meeting_uuid": "dqu5XL/fRkuTa93yfcgvDA==",
+    "meeting_id": 82471765408,
+    "meeting_topic": "Will Roundtree LIVE Masterclass : The Fundable CEO Framework\u2122: Live Masterclass",
+    "recorded_at": "2026-11-04T16:54:57-08:00",
+    "date_label": "Wednesday, November 4, 2026",
+    "start_at": 344,
+    "promo_at": 5022,
     "duration_min": 112,
     "updated_at": "2026-11-18T00:55:48+00:00",
     "video_url": "https://files.leadconnectorhq.com/file/6afcf7abf560033dc17333d5/masterclass-replay-2026-11-04.mp4",
