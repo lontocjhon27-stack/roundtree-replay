@@ -272,6 +272,10 @@ def set_custom_values(values):
 
 
 def count_registrants(webinar_date):
+    return len(registrant_ids(webinar_date))
+
+
+def registrant_ids(webinar_date):
     """Unique contacts with a Live Webinars opportunity for this webinar date."""
     val = lambda f: str(f.get('fieldValueString') or f.get('fieldValue') or f.get('field_value') or f.get('value') or '')
     seen, page = set(), 1
@@ -285,7 +289,7 @@ def count_registrants(webinar_date):
             break
         page += 1
     seen.discard(None)
-    return len(seen)
+    return seen
 
 
 def bookings_since(cids, since_utc):
@@ -325,11 +329,74 @@ def will_summary(label, registered, attendees, groups, booked):
         + booked_line
         + li(f'Every attendee is assigned to a setter as HOT, WARM or COLD, with a call task in their queue: '
              f'Bryan {len(groups["Bryan"])}, Jeremiah {len(groups["Jeremiah"])}, Phillip {len(groups["Phillip"])}.')
+        + li('Everyone who registered but did not attend is also assigned to a setter, with a call task to offer the replay and invite them to the next masterclass.')
         + li('Each setter received their lead report by email (you and Jercori are CC\'d), and the summary is posted in #lead-distribution.')
         + '</ul>'
         f'<p {p}>Talk soon,<br>Jhon</p>'
     )
 
+
+
+# ---------------------------------------------------------------- no-shows (registered, did not attend)
+NOSHOW_WF = os.environ.get('NOSHOW_WORKFLOW_ID', '04331ffd-5b60-4cce-a142-884c276615a1')  # "NO-SHOW webinar lead" manual call
+SKIP_TAGS = {'owner-ron-no-marketing'}
+SKIP_NAMES = re.compile(r'sylvia\s+lewis', re.I)
+
+
+def noshow_table(rows):
+    td = 'style="border:1px solid #ddd;padding:6px 8px;font-family:Arial,Helvetica,sans-serif;font-size:13px;vertical-align:top;"'
+    th = 'style="border:1px solid #ddd;padding:6px 8px;font-family:Arial,Helvetica,sans-serif;font-size:13px;background:#f3f3f3;text-align:left;"'
+    head = ''.join(f'<th {th}>{h}</th>' for h in ['#', 'Lead', 'Phone', 'Lead time zone'])
+    body = ''.join(f'<tr><td {td}>{i}</td><td {td}>{esc(r["display"])}</td><td {td}>{esc(fmt_phone(r["phone"]))}</td>'
+                   f'<td {td}>{esc(r["tz"])}</td></tr>' for i, r in enumerate(sorted(rows, key=lambda r: r['display']), 1))
+    return f'<table style="border-collapse:collapse;width:100%;"><tr>{head}</tr>{body}</table>'
+
+
+def noshow_block(rows, next_label):
+    p = 'style="margin:0px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;"'
+    if not rows:
+        return ''
+    return (f'<p style="margin:0px;">&nbsp;</p><p {p}><b>Registered but did NOT attend: {len(rows)}</b></p>'
+            f'<p {p}>Each one is in your Manual Actions as "NO-SHOW webinar lead". Call them, offer the replay, '
+            f'and invite them to the next live masterclass{next_label}.</p><p style="margin:0px;">&nbsp;</p>' + noshow_table(rows))
+
+
+def process_noshows(reg_ids, attended_ids, groups):
+    """Owner check (unowned -> setter with the fewest leads), NO-SHOW call task, rows per setter."""
+    setter_ids = {v: k for k, v in SETTERS.items()}
+    load = {s: len(v) for s, v in groups.items()}
+    out = {s: [] for s in SETTERS.values()}
+    skipped = tasks = reassigned = 0
+    keep = []
+    for cid in reg_ids - attended_ids:
+        c = contact(cid)
+        name = f"{c.get('firstName','')} {c.get('lastName','')}".strip()
+        if SKIP_TAGS & set(c.get('tags', [])) or SKIP_NAMES.search(name) or c.get('dnd'):
+            skipped += 1
+            continue
+        keep.append((cid, c, name))
+        s = SETTERS.get(c.get('assignedTo'))
+        if s:
+            load[s] += 1
+    for cid, c, name in keep:
+        s = SETTERS.get(c.get('assignedTo'))
+        if not s:
+            s = min(load, key=load.get)
+            ghl('PUT', f'/contacts/{cid}', {'assignedTo': setter_ids[s]})
+            load[s] += 1
+            reassigned += 1
+        tz_tag = next((t for t in c.get('tags', []) if t in TZ_TAGS), None)
+        out[s].append({'display': name.title() or '(no name)', 'phone': c.get('phone'),
+                       'tz': TZ_TAGS.get(tz_tag, ('Unknown', ''))[0]})
+        if c.get('phone') and NOSHOW_WF:
+            try:
+                ghl('POST', f'/contacts/{cid}/workflow/{NOSHOW_WF}', {})
+                tasks += 1
+            except Exception as e:
+                log('No-show task failed:', str(e)[:100])
+    log(f'No-shows: {sum(len(v) for v in out.values())} (' + ', '.join(f'{k} {len(v)}' for k, v in out.items())
+        + f'); call tasks {tasks}; unowned reassigned {reassigned}; skipped {skipped}')
+    return out
 
 # ---------------------------------------------------------------- main
 def load_state():
@@ -412,28 +479,34 @@ def main():
             no_owner += 1
     log('Per setter: ' + ', '.join(f'{k} {len(v)}' for k, v in groups.items()) + f'; no setter owner: {no_owner}')
 
+    reg_ids = registrant_ids(webinar_date)
+    noshows = process_noshows(reg_ids, {p['cid'] for p in matched}, groups)
+    nxt = slot + dt.timedelta(days=14)
+    next_label = f' on Wed {nxt:%b} {nxt.day}, 5:00 PM PT'
+
     hc = lambda rows: sum(1 for r in rows if r['temp'] == 'hot')
     total = sum(len(v) for v in groups.values())
     slack = (f"📣 *{label} Webinar Leads Are Out!*\n\n*{total} attended:*  🔥 {sum(hc(v) for v in groups.values())} Hot  ·  "
              f"🟠 {sum(1 for v in groups.values() for r in v if r['temp']=='warm')} Warm  ·  "
              f"🔵 {sum(1 for v in groups.values() for r in v if r['temp']=='cold')} Cold\n\n"
-             f"<@U0C3YQQTP98>  {len(groups['Bryan'])} leads ({hc(groups['Bryan'])} hot)\n"
-             f"<@U0C2J041FT2>  {len(groups['Jeremiah'])} leads ({hc(groups['Jeremiah'])} hot)\n"
-             f"<@U0C6JNLEKAL>  {len(groups['Phillip'])} leads ({hc(groups['Phillip'])} hot)\n\n"
-             "Your full lead report was sent to your *email*. Your leads are also in *Manual Actions*, each tagged 🔥 HOT / 🟠 WARM / 🔵 COLD.\n\n"
+             f"<@U0C3YQQTP98>  {len(groups['Bryan'])} attended ({hc(groups['Bryan'])} hot) + {len(noshows['Bryan'])} no-shows\n"
+             f"<@U0C2J041FT2>  {len(groups['Jeremiah'])} attended ({hc(groups['Jeremiah'])} hot) + {len(noshows['Jeremiah'])} no-shows\n"
+             f"<@U0C6JNLEKAL>  {len(groups['Phillip'])} attended ({hc(groups['Phillip'])} hot) + {len(noshows['Phillip'])} no-shows\n\n"
+             "Your full lead report (attendees + no-shows) was sent to your *email*. Your leads are also in *Manual Actions*: 🔥 HOT / 🟠 WARM / 🔵 COLD, plus ⚪ NO-SHOW (offer the replay + invite to the next webinar).\n\n"
              "*Please call your leads now. HOT first.*\n_Reminder: no calls after 9 PM in the lead's local time. Call those first thing tomorrow._")
     if unmatched_people:
         lab = {'hot': 'HOT', 'warm': 'WARM', 'cold': 'COLD'}
         slack += ("\n\n⚠️ *Not matched to a GHL contact* (Zoom name/email differs from registration), please find + tag manually:\n"
                   + '\n'.join(f"• {p['name'] or '(no name)'} ({p['email'] or 'no email'}) – {lab[p['temp']]}, {p['minutes']} min"
                               for p in unmatched_people))
-    registered = count_registrants(webinar_date)
+    registered = len(reg_ids)
     booked = bookings_since([p['cid'] for p in matched], start.astimezone(dt.timezone.utc))
     log(f'Registered {registered}; bookings since start: {booked}')
     values = {'Webinar Report Date': label, 'Webinar Report Slack': slack,
               'Webinar Report Will': will_summary(label, registered, people, groups, booked)}
     for s, rows in groups.items():
-        values[f'Webinar Report {s}'] = setter_block(s, rows) if rows else '<p>No new webinar leads for you this time.</p>'
+        values[f'Webinar Report {s}'] = ((setter_block(s, rows) if rows else '<p>No attendees for you this time.</p>')
+                                         + noshow_block(noshows[s], next_label))
     set_custom_values(values)
     log('Report custom values updated.')
 
