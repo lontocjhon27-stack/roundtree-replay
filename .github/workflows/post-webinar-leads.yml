@@ -1,0 +1,69 @@
+name: Post-webinar leads (HOT/WARM/COLD + setter reports)
+
+on:
+  # Masterclass = every other Wednesday 5:00 PM PT (ends ~6:55 PM). Runs every Wednesday night;
+  # the script only acts when a masterclass instance ended in the last ~20 h and was not processed yet.
+  schedule:
+    - cron: '15 3 * * 4'   # Thu 03:15 UTC = Wed 7:15 PM PST / 8:15 PM PDT
+    - cron: '0 4 * * 4'    # Thu 04:00 UTC = Wed 8:00 PM PST (retry)
+    - cron: '0 5 * * 4'    # Thu 05:00 UTC = Wed 9:00 PM PST (retry)
+  workflow_dispatch:
+    inputs:
+      meeting_id:
+        description: 'Zoom meeting id (blank = recurring masterclass 85794795023)'
+        required: false
+      meeting_uuid:
+        description: 'Exact past instance uuid (optional)'
+        required: false
+      dry_run:
+        description: 'Dry run (Zoom + counts only, no GHL changes)'
+        type: boolean
+        default: true
+      no_send:
+        description: 'Tag in GHL but do not send the setter email/Slack'
+        type: boolean
+        default: false
+      force:
+        description: 'Process even if already processed'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: post-webinar-leads
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Tag attendees + send setter reports
+        env:
+          ZOOM_ACCOUNT_ID: ${{ secrets.ZOOM_ACCOUNT_ID }}
+          ZOOM_CLIENT_ID: ${{ secrets.ZOOM_CLIENT_ID }}
+          ZOOM_CLIENT_SECRET: ${{ secrets.ZOOM_CLIENT_SECRET }}
+          GHL_TOKEN: ${{ secrets.GHL_TOKEN }}
+          GHL_LOCATION_ID: ${{ vars.GHL_LOCATION_ID || 'pcY7ioQLTs15S0hJiOdG' }}
+          MEETING_ID: ${{ inputs.meeting_id }}
+          MEETING_UUID: ${{ inputs.meeting_uuid }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          NO_SEND: ${{ inputs.no_send && '1' || '0' }}
+          FORCE: ${{ inputs.force && '1' || '0' }}
+        run: python scripts/post_webinar_leads.py
+      - name: Save state
+        run: |
+          if [ -z "$(git status --porcelain post-webinar-state.json)" ]; then echo "No change."; exit 0; fi
+          git config user.name "replay-bot"
+          git config user.email "replay-bot@users.noreply.github.com"
+          git add post-webinar-state.json
+          git commit -m "Post-webinar leads processed"
+          git pull --rebase
+          git push
