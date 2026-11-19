@@ -202,6 +202,38 @@ def offer_second(vtt_text):
     return None
 
 
+
+# ---------------------------------------------------------------- shrink big recordings (GHL Media rejects ~500 MB+ with 413)
+MAX_UPLOAD_MB = int(os.environ.get('MAX_UPLOAD_MB', '400'))
+
+
+def shrink_mp4(path):
+    mb = os.path.getsize(path) / 1048576
+    if mb <= MAX_UPLOAD_MB:
+        return path
+    import subprocess
+    for crf, height in ((30, 720), (34, 720), (34, 540)):
+        out = path.replace('.mp4', f'-{height}p-crf{crf}.mp4')
+        log(f'  compressing {mb:.0f} MB -> {height}p crf {crf} ...')
+        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', path,
+                        '-vf', f'scale=-2:{height}', '-r', '15', '-c:v', 'libx264', '-preset', 'veryfast',
+                        '-crf', str(crf), '-c:a', 'aac', '-b:a', '64k', '-ac', '1', '-movflags', '+faststart', out],
+                       check=True)
+        new_mb = os.path.getsize(out) / 1048576
+        log(f'  compressed to {new_mb:.0f} MB')
+        if new_mb <= MAX_UPLOAD_MB:
+            return out
+    raise RuntimeError(f'Recording still over {MAX_UPLOAD_MB} MB after compression')
+
+
+def scheduled_start_offset(start_pt):
+    """No captions: start the replay at the scheduled top of the hour (webinar = 5:00 PM PT)."""
+    top = start_pt.replace(minute=0, second=0, microsecond=0)
+    if start_pt.minute >= 30:
+        top += dt.timedelta(hours=1)
+    off = int((top - start_pt).total_seconds())
+    return off if 0 <= off <= 1800 else 0
+
 # ---------------------------------------------------------------- GHL Media
 def ghl_upload(path, name, mime):
     with open(path, 'rb') as fh:
@@ -254,6 +286,9 @@ def main():
         chat_text = open(chat_path, encoding='utf-8', errors='replace').read()
 
     start_at = first_caption_second(vtt_text)
+    if not vtt_text:
+        start_at = scheduled_start_offset(start_pt)
+        log(f'  no captions/transcript in Zoom: start_at from schedule = {start_at}s')
     offer_at = offer_second(vtt_text)
     promo_at = ready_second(chat_text) or offer_at
     featured = featured_moments(vtt_text, offer_at)
@@ -282,7 +317,7 @@ def main():
         log('DRY_RUN: skipping MP4 download/uploads. Would write:', json.dumps(cfg, indent=2))
         return 0
 
-    mp4_path = download(token, mp4, os.path.join(tmp, f'replay-{stamp}.mp4'))
+    mp4_path = shrink_mp4(download(token, mp4, os.path.join(tmp, f'replay-{stamp}.mp4')))
     cfg['video_url'] = ghl_upload(mp4_path, f'Masterclass Replay {stamp}.mp4', 'video/mp4')
     if vtt_path:
         # GHL Media rejects .vtt files, so captions go up as .txt (the page only reads the text)
