@@ -312,7 +312,13 @@ def main():
     counts = {t: sum(1 for p in people if p['temp'] == t) for t in ('hot', 'warm', 'cold')}
     log(f'Webinar {label}: {len(people)} attendees (excl. staff) -> HOT {counts["hot"]} / WARM {counts["warm"]} / COLD {counts["cold"]}')
     if DRY:
-        log('DRY RUN: no GHL changes.')
+        # Read-only GHL checks: token scopes, stages, custom values, and how many attendees match a contact.
+        stages = attended_stages()
+        cvs = ghl('GET', f'/locations/{LOC}/customValues').get('customValues', [])
+        found = sum(1 for p in people if find_contact(p, webinar_date))
+        have = [n for n in CV_KEYS if any(c['name'] == n for c in cvs)]
+        log(f'DRY RUN (read-only GHL): stages found {sum(1 for v in stages.values() if v)}/3, '
+            f'matched contacts {found}/{len(people)}, report custom values present {len(have)}/{len(CV_KEYS)}. No changes made.')
         return
 
     stages = attended_stages()
