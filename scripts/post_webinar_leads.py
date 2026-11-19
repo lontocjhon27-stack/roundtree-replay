@@ -66,7 +66,7 @@ TZ_TAGS = {'tz-eastern': ('Eastern', 'America/New_York'), 'tz-central': ('Centra
 CV_KEYS = {  # custom value name -> what it holds
     'Webinar Report Date': 'date',
     'Webinar Report Bryan': 'Bryan', 'Webinar Report Jeremiah': 'Jeremiah', 'Webinar Report Phillip': 'Phillip',
-    'Webinar Report Slack': 'slack',
+    'Webinar Report Slack': 'slack', 'Webinar Report Will': 'will',
 }
 API = 'https://services.leadconnectorhq.com'
 
@@ -271,6 +271,66 @@ def set_custom_values(values):
             ghl('POST', f'/locations/{LOC}/customValues', {'name': name, 'value': value})
 
 
+def count_registrants(webinar_date):
+    """Unique contacts with a Live Webinars opportunity for this webinar date."""
+    val = lambda f: str(f.get('fieldValueString') or f.get('fieldValue') or f.get('field_value') or f.get('value') or '')
+    seen, page = set(), 1
+    while page <= 80:
+        j = ghl('GET', '/opportunities/search', params={'location_id': LOC, 'pipeline_id': PIPE, 'limit': 100, 'page': page})
+        opps = j.get('opportunities', [])
+        for o in opps:
+            if any(f.get('id') == WEBINAR_DATE_FIELD and val(f) == webinar_date for f in o.get('customFields', [])):
+                seen.add(o.get('contactId') or (o.get('contact') or {}).get('id'))
+        if len(opps) < 100:
+            break
+        page += 1
+    seen.discard(None)
+    return len(seen)
+
+
+def bookings_since(cids, since_utc):
+    """How many of these contacts booked an appointment after the webinar started (None if not readable)."""
+    n = 0
+    try:
+        for cid in cids:
+            j = ghl('GET', f'/contacts/{cid}/appointments')
+            for ev in j.get('events', []) or j.get('appointments', []):
+                added = ev.get('dateAdded') or ev.get('createdAt')
+                if added and dt.datetime.fromisoformat(str(added).replace('Z', '+00:00')) >= since_utc:
+                    n += 1
+                    break
+    except Exception as e:
+        log('Bookings not counted:', str(e)[:120])
+        return None
+    return n
+
+
+def will_summary(label, registered, attendees, groups, booked):
+    p = 'style="margin:0px 0px 8px 0px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;"'
+    att = len(attendees)
+    hot = sum(1 for a in attendees if a['temp'] == 'hot')
+    warm = sum(1 for a in attendees if a['temp'] == 'warm')
+    cold = sum(1 for a in attendees if a['temp'] == 'cold')
+    pct = f' ({round(100 * att / registered)}%)' if registered else ''
+    li = lambda t: f'<li style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;">{t}</li>'
+    booked_line = (li(f'<b>{booked} strategy call{"s" if booked != 1 else ""} booked</b> so far tonight by people who attended live.')
+                   if booked else '')
+    return (
+        f'<p {p}>Hi Will,</p><p {p}>Here\'s the recap of the {label} live masterclass.</p>'
+        f'<p {p}><b>Turnout</b></p><ul>'
+        + li(f'<b>{registered} registered</b> for this webinar.')
+        + li(f'<b>{att} attended live{pct}.</b> {hot} watched 75+ minutes, {warm} watched 30–74 minutes, and {cold} dropped in briefly.')
+        + '</ul>'
+        f'<p {p}><b>Follow-up</b></p><ul>'
+        + booked_line
+        + li(f'Every attendee is assigned to a setter as HOT, WARM or COLD, with a call task in their queue: '
+             f'Bryan {len(groups["Bryan"])}, Jeremiah {len(groups["Jeremiah"])}, Phillip {len(groups["Phillip"])}.')
+        + li('Each setter received their lead report by email (you and Jercori are CC\'d), and the summary is posted in #lead-distribution.')
+        + '</ul>'
+        f'<p {p}>Talk soon,<br>Jhon</p>'
+    )
+
+
 # ---------------------------------------------------------------- main
 def load_state():
     try:
@@ -317,8 +377,10 @@ def main():
         cvs = ghl('GET', f'/locations/{LOC}/customValues').get('customValues', [])
         found = sum(1 for p in people if find_contact(p, webinar_date))
         have = [n for n in CV_KEYS if any(c['name'] == n for c in cvs)]
+        reg = count_registrants(webinar_date)
         log(f'DRY RUN (read-only GHL): stages found {sum(1 for v in stages.values() if v)}/3, '
-            f'matched contacts {found}/{len(people)}, report custom values present {len(have)}/{len(CV_KEYS)}. No changes made.')
+            f'matched contacts {found}/{len(people)}, registered {reg}, '
+            f'report custom values present {len(have)}/{len(CV_KEYS)}. No changes made.')
         return
 
     stages = attended_stages()
@@ -365,7 +427,11 @@ def main():
         slack += ("\n\n⚠️ *Not matched to a GHL contact* (Zoom name/email differs from registration), please find + tag manually:\n"
                   + '\n'.join(f"• {p['name'] or '(no name)'} ({p['email'] or 'no email'}) – {lab[p['temp']]}, {p['minutes']} min"
                               for p in unmatched_people))
-    values = {'Webinar Report Date': label, 'Webinar Report Slack': slack}
+    registered = count_registrants(webinar_date)
+    booked = bookings_since([p['cid'] for p in matched], start.astimezone(dt.timezone.utc))
+    log(f'Registered {registered}; bookings since start: {booked}')
+    values = {'Webinar Report Date': label, 'Webinar Report Slack': slack,
+              'Webinar Report Will': will_summary(label, registered, people, groups, booked)}
     for s, rows in groups.items():
         values[f'Webinar Report {s}'] = setter_block(s, rows) if rows else '<p>No new webinar leads for you this time.</p>'
     set_custom_values(values)
