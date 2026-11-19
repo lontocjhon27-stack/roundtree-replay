@@ -1,12 +1,11 @@
 name: Post-webinar leads (HOT/WARM/COLD + setter reports)
 
 on:
-  # Masterclass = every other Wednesday 5:00 PM PT (ends ~6:55 PM). Runs every Wednesday night;
-  # the script only acts when a masterclass instance ended in the last ~20 h and was not processed yet.
+  # Masterclass = every other Wednesday 5:00 PM PT; end time varies. Check every 10 minutes on
+  # Wednesday evening PT. The script does nothing until Zoom shows the meeting as ENDED, and does
+  # nothing again once that webinar is in post-webinar-state.json, so only one run per webinar acts.
   schedule:
-    - cron: '15 3 * * 4'   # Thu 03:15 UTC = Wed 7:15 PM PST / 8:15 PM PDT
-    - cron: '0 4 * * 4'    # Thu 04:00 UTC = Wed 8:00 PM PST (retry)
-    - cron: '0 5 * * 4'    # Thu 05:00 UTC = Wed 9:00 PM PST (retry)
+    - cron: '*/10 1-6 * * 4'   # Thu 01:00-06:59 UTC = Wed 5:00-10:59 PM PST / 6:00-11:59 PM PDT
   workflow_dispatch:
     inputs:
       meeting_id:
