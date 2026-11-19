@@ -322,16 +322,16 @@ def main():
         return
 
     stages = attended_stages()
-    matched, unmatched = [], 0
+    matched, unmatched_people = [], []
     for p in people:
         cid = find_contact(p, webinar_date)
         if not cid:
-            unmatched += 1
+            unmatched_people.append(p)
             continue
         write_contact(cid, p, stages, webinar_date)
         p['cid'] = cid
         matched.append(p)
-    log(f'Tagged {len(matched)} contacts in GHL; {unmatched} Zoom attendees had no matching GHL contact.')
+    log(f'Tagged {len(matched)} contacts in GHL; {len(unmatched_people)} Zoom attendees had no matching GHL contact.')
 
     # Let the HOT/WARM/COLD workflows assign setters (they wait 2 min), then read owners.
     time.sleep(240)
@@ -360,6 +360,11 @@ def main():
              f"<@U0C6JNLEKAL>  {len(groups['Phillip'])} leads ({hc(groups['Phillip'])} hot)\n\n"
              "Your full lead report was sent to your *email*. Your leads are also in *Manual Actions*, each tagged 🔥 HOT / 🟠 WARM / 🔵 COLD.\n\n"
              "*Please call your leads now. HOT first.*\n_Reminder: no calls after 9 PM in the lead's local time. Call those first thing tomorrow._")
+    if unmatched_people:
+        lab = {'hot': 'HOT', 'warm': 'WARM', 'cold': 'COLD'}
+        slack += ("\n\n⚠️ *Not matched to a GHL contact* (Zoom name/email differs from registration), please find + tag manually:\n"
+                  + '\n'.join(f"• {p['name'] or '(no name)'} ({p['email'] or 'no email'}) – {lab[p['temp']]}, {p['minutes']} min"
+                              for p in unmatched_people))
     values = {'Webinar Report Date': label, 'Webinar Report Slack': slack}
     for s, rows in groups.items():
         values[f'Webinar Report {s}'] = setter_block(s, rows) if rows else '<p>No new webinar leads for you this time.</p>'
