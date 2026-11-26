@@ -27,6 +27,7 @@ import sys
 import tempfile
 from zoneinfo import ZoneInfo
 
+import urllib.parse
 import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 
@@ -67,7 +68,37 @@ def zoom_recordings(token, days=14):
     return r.json().get('meetings', [])
 
 
-def pick_meeting(meetings):
+STAFF_RE = re.compile(r'wemanagementservices\.com|wroundtree|fireflies|notetaker|otter\.ai|read\.ai|'
+                      r'usharplynn|kristin gaxiola|sylvia lewis|lontocjhon|bryanp1430', re.I)
+MIN_REAL_ATTENDEES = 3                 # an empty room (only staff / note-taker bots) is not a webinar
+
+
+def real_attendees(token, uuid):
+    """Unique non-staff participants of a past meeting instance (0 if Zoom has no data)."""
+    u = urllib.parse.quote(urllib.parse.quote(uuid, safe=''), safe='') if uuid.startswith('/') or '//' in uuid else urllib.parse.quote(uuid, safe='')
+    seen, nxt = set(), ''
+    for _ in range(20):
+        params = {'page_size': 300}
+        if nxt:
+            params['next_page_token'] = nxt
+        r = requests.get(f'https://api.zoom.us/v2/past_meetings/{u}/participants', params=params,
+                         headers={'Authorization': f'Bearer {token}'}, timeout=30)
+        if r.status_code >= 400:
+            log(f'Participants check failed ({r.status_code}); treating as 0 real attendees.')
+            return 0
+        j = r.json()
+        for p in j.get('participants', []):
+            email, name = (p.get('user_email') or '').strip().lower(), (p.get('name') or '').strip()
+            if STAFF_RE.search(email) or STAFF_RE.search(name):
+                continue
+            seen.add(email or 'name:' + name.lower())
+        nxt = j.get('next_page_token') or ''
+        if not nxt:
+            break
+    return len(seen)
+
+
+def pick_meeting(meetings, token=None):
     want = os.environ.get('MEETING_ID', '').replace(' ', '')
     good = []
     for m in meetings:
@@ -81,7 +112,16 @@ def pick_meeting(meetings):
             continue
         good.append(m)
     good.sort(key=lambda m: m['start_time'], reverse=True)
-    return good[0] if good else None
+    for m in good:
+        # Guard (added after Nov 25 2026): the recurring room can open on an off-week (note-taker bot +
+        # join-before-host) and record for hours with nobody in it. Never publish such a recording.
+        if want or FORCE or token is None:
+            return m
+        n = real_attendees(token, m['uuid'])
+        if n >= MIN_REAL_ATTENDEES:
+            return m
+        log(f"Skipping {m['start_time']} ({m.get('duration')} min): only {n} real attendee(s), not a webinar.")
+    return None
 
 
 def best_file(files, ftype, prefer=None):
@@ -258,7 +298,7 @@ def ghl_upload(path, name, mime):
 def main():
     current = json.load(open(CONFIG_PATH, encoding='utf-8')) if os.path.exists(CONFIG_PATH) else {}
     token = zoom_token()
-    meeting = pick_meeting(zoom_recordings(token))
+    meeting = pick_meeting(zoom_recordings(token), token)
     if not meeting:
         log('No finished LIVE Masterclass recording found in the last 14 days.')
         return 0

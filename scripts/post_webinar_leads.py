@@ -51,6 +51,7 @@ FORCE = os.environ.get('FORCE') == '1'
 
 HOT, WARM = 75, 30
 MIN_MEETING_MIN = 45                      # ignore short/test instances
+MIN_REAL_ATTENDEES = 3                    # fewer non-staff attendees = not a webinar (empty room / bot only)
 MAX_AGE_H = 20                            # only process instances that ended in the last N hours (scheduled runs)
 STAFF = re.compile(r'wemanagementservices\.com|wroundtree|fireflies|notetaker|otter\.ai|read\.ai|'
                    r'usharplynn|kristin gaxiola|sylvia lewis|lontocjhon|bryanp1430', re.I)
@@ -371,7 +372,8 @@ def process_noshows(reg_ids, attended_ids, groups):
     for cid in reg_ids - attended_ids:
         c = contact(cid)
         name = f"{c.get('firstName','')} {c.get('lastName','')}".strip()
-        if SKIP_TAGS & set(c.get('tags', [])) or SKIP_NAMES.search(name) or c.get('dnd'):
+        if (SKIP_TAGS & set(c.get('tags', [])) or any(t.startswith('webinar-moved') for t in c.get('tags', []))
+                or SKIP_NAMES.search(name) or c.get('dnd')):
             skipped += 1
             continue
         keep.append((cid, c, name))
@@ -436,6 +438,16 @@ def main():
     label = f'{slot:%b} {slot.day}'
 
     people = minutes_by_person(parts)
+    # Guard (added after Nov 25 2026): an off-week room that opened with only staff / a note-taker bot
+    # must never tag anyone, create no-show tasks or send reports.
+    if len(people) < MIN_REAL_ATTENDEES and not FORCE:
+        log(f'Webinar {label}: only {len(people)} non-staff attendee(s) -> not a real webinar. '
+            'No GHL changes, no reports sent.')
+        state['processed'].append(uuid)
+        state.setdefault('skipped', {})[uuid] = f'{label}: {len(people)} real attendees'
+        state['last_run'] = dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')
+        json.dump(state, open(STATE_PATH, 'w'), indent=2)
+        return
     counts = {t: sum(1 for p in people if p['temp'] == t) for t in ('hot', 'warm', 'cold')}
     log(f'Webinar {label}: {len(people)} attendees (excl. staff) -> HOT {counts["hot"]} / WARM {counts["warm"]} / COLD {counts["cold"]}')
     if DRY:
