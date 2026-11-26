@@ -30,7 +30,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Check and mark bad numbers
         env:
-          GHL_TOKEN: ${{ secrets.GHL_TOKEN }}
+          GHL_TOKEN: ${{ secrets.GHL_BADNUM_TOKEN }}
           GHL_LOCATION_ID: ${{ vars.GHL_LOCATION_ID || 'pcY7ioQLTs15S0hJiOdG' }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days || '45' }}
