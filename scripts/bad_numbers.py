@@ -57,7 +57,7 @@ def recent_contacts():
     out = []
     for page in range(1, 60):
         j = ghl('POST', '/contacts/search', {'locationId': LOC, 'page': page, 'pageLimit': 100,
-                                              'sort': [{'field': 'date_added', 'direction': 'desc'}]})
+                                              'sort': [{'field': 'dateAdded', 'direction': 'desc'}]})
         cs = j.get('contacts') or []
         stop = False
         for c in cs:
