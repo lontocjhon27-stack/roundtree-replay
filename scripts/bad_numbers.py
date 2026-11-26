@@ -103,6 +103,8 @@ def mark_bad(cid, owner):
 
 
 def main():
+    tok = os.environ.get('GHL_TOKEN', '').strip()
+    log(f'Token check: starts with "pit-": {tok.startswith("pit-")}, length {len(tok)}')
     contacts = recent_contacts()
     log(f'Checking {len(contacts)} contacts with a phone added in the last {LOOKBACK} days (not yet tagged).')
     bad = errors = 0
