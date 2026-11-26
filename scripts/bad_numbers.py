@@ -117,6 +117,10 @@ def main():
             errors += 1
             if errors <= 3:
                 log('Error:', str(e)[:160])
+            if 'not authorized for this scope' in str(e):
+                log('STOP: the GHL Private Integration token needs the conversations.readonly and '
+                    'conversations/message.readonly scopes. Nothing was changed.')
+                sys.exit(1)
         if i % 200 == 0:
             log(f'...{i} checked, {bad} bad so far')
     log(f'Done. Bad numbers found: {bad}' + (' (DRY RUN, nothing changed)' if DRY else ' (tagged + SMS DND + owner task)')
