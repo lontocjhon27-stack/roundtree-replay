@@ -33,7 +33,7 @@ def log(*a):
 
 
 def ghl(method, path, body=None, params=None, version='2021-07-28'):
-    h = {'Authorization': 'Bearer ' + os.environ['GHL_TOKEN'], 'Version': version,
+    h = {'Authorization': 'Bearer ' + os.environ['GHL_TOKEN'].strip(), 'Version': version,
          'Content-Type': 'application/json', 'Accept': 'application/json'}
     for attempt in range(5):
         r = requests.request(method, API + path, headers=h, params=params,
